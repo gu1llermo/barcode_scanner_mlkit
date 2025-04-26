@@ -1,18 +1,20 @@
 package com.gu1llermo.barcode_scanner_mlkit
 
-import android.view.OrientationEventListener
-import android.graphics.ImageFormat
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.res.Configuration
+import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.util.Log
 import android.util.Size
+import android.view.OrientationEventListener
 import android.view.Surface
 import androidx.annotation.OptIn
 import androidx.camera.core.*
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
@@ -21,6 +23,7 @@ import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+//import io.flutter.embedding.engine.systemchannels.PlatformChannel.DeviceOrientation
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.view.TextureRegistry
@@ -54,6 +57,11 @@ class CameraHandler(
     private var orientationEventListener: OrientationEventListener? = null
     private var lastKnownRotation = Surface.ROTATION_0
 
+    // Variables para almacenar el tamaño de la textura
+    private var textureWidth = 720
+    private var textureHeight = 1280
+    //private var screenSize = Size(textureWidth, textureHeight)
+
     @SuppressLint("UnsafeOptInUsageError")
     fun initializeCamera(options: Map<String, Any>?, result: Result) {
         try {
@@ -70,20 +78,50 @@ class CameraHandler(
                         cameraProvider = cameraProviderFuture.get()
 
                         // Extraer resolución personalizada de las opciones
-//                            val resolution = extractResolution(options)
+                            val resolution = extractResolution(options)
+
+//                        val resolutionStrategy = ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY
+
+//                        val resolutionSelector = ResolutionSelector.Builder().setResolutionStrategy(resolutionStrategy).build()
 
                         // CameraX ya maneja automáticamente las orientaciones
 //                            preview = Preview.Builder().setTargetResolution(resolution).build()
-                        preview = Preview.Builder().build()
+//                        preview = Preview.Builder().setResolutionSelector(resolutionSelector).build()
+                        //val screenSize = Size(resolution.width, resolution.height)
+                        val resolutionStrategy = ResolutionStrategy(
+                            resolution,
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
+                        )
+                        val resolutionSelector = ResolutionSelector.Builder()
+                            .setResolutionStrategy(resolutionStrategy)
+                            .build()
+
+                        val rotation = Surface.ROTATION_270
+//                        Log.d(tagOrientation, "Rotation: $rotation")
+
+                        preview = Preview.Builder()
+//                            .setResolutionSelector(resolutionSelector)
+//                            .setTargetRotation(rotation)
+
+
+
+//                            .setTargetRotation(Surface.ROTATION_270)
+
+
+                            .build()
+
+
 
                         // Usar la superficie de Flutter
                         preview?.setSurfaceProvider { request ->
-                            val texture = flutterTexture?.surfaceTexture()
-                            texture?.setDefaultBufferSize(
-                                request.resolution.width,
-                                request.resolution.height
-                            )
-                            val surface = Surface(texture!!)
+                            val texture = flutterTexture?.surfaceTexture() ?: return@setSurfaceProvider
+
+                            // Guardar las dimensiones actuales
+                            textureWidth = request.resolution.width
+                            textureHeight = request.resolution.height
+
+                            texture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
+                            val surface = Surface(texture)
                             request.provideSurface(surface, cameraExecutor) {
                                 surface.release()
                             }
@@ -92,7 +130,6 @@ class CameraHandler(
                         // Configurar análisis de imágenes
                         imageAnalysis =
                             ImageAnalysis.Builder()
-//                                            .setTargetResolution(resolution)
                                 .setBackpressureStrategy(
                                     ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
                                 )
@@ -146,100 +183,110 @@ class CameraHandler(
     private fun setupOrientationListener() {
         orientationEventListener = object : OrientationEventListener(context) {
             override fun onOrientationChanged(orientation: Int) {
-                // Log para depuración de orientación
-                //Log.d(TAG_ORIENTATION, "Orientación actual: $orientation")
-
                 if (orientation == OrientationEventListener.ORIENTATION_UNKNOWN) return
 
-                // When orientation changes, determine the current rotation
-                val currentRotation = when (orientation) {
-                    in 45 until 135 -> Surface.ROTATION_270
-                    in 135 until 225 -> Surface.ROTATION_180
-                    in 225 until 315 -> Surface.ROTATION_90
-                    else -> Surface.ROTATION_0
+                // Map orientation to rotation values
+                val currentRotation = when {
+                    orientation <= 45 || orientation > 315 -> Surface.ROTATION_0
+                    orientation <= 135 -> Surface.ROTATION_90
+                    orientation <= 225 -> Surface.ROTATION_180
+                    else -> Surface.ROTATION_270
                 }
-//                val currentRotation = when {
-//                    orientation <= 45 || orientation > 315 -> Surface.ROTATION_0
-//                    orientation <= 135 -> Surface.ROTATION_90
-//                    orientation <= 225 -> Surface.ROTATION_180
-//                    else -> Surface.ROTATION_270
-//                }
 
-                // Only update if needed to avoid flickering
+                // Only update if rotation changed
                 if (currentRotation != lastKnownRotation) {
                     lastKnownRotation = currentRotation
-                    Log.d(tagOrientation, "Orientación actual: $orientation")
-                    Log.d(tagOrientation, "restartPreviewIfNeeded: $currentRotation")
-                    // Restart camera preview if necessary
-                    restartPreviewIfNeeded()
-
+                    Log.d(tagOrientation, "Orientation changed to: $orientation, rotation: $currentRotation")
+                    // Update camera
+                   // restartPreviewIfNeeded()
+                    // Aquí está la clave: actualizar el viewport con la nueva rotación
+                    activity.runOnUiThread {
+                        updateCameraWithRotation(currentRotation)
+                    }
                 }
             }
         }
 
         if (orientationEventListener?.canDetectOrientation() == true) {
             orientationEventListener?.enable()
+            Log.d(tagOrientation, "Orientation listener enabled")
+        }
+    }
+
+    private fun updateCameraWithRotation(rotation: Int) {
+        try {
+            // Solo realizar cambios si el proveedor de cámara está disponible y la cámara no está en pausa
+            val provider = cameraProvider ?: return
+            if (isPaused) {
+                Log.d(tagOrientation, "La cámara está en pausa, no se actualizará la rotación")
+                return
+            }
+
+            // Obtener el selector de cámara actual
+            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+            // Ajustar ancho y alto según la rotación (intercambiar si es necesario)
+            val adjustedWidth = if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) textureHeight else textureWidth
+            val adjustedHeight = if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) textureWidth else textureHeight
+
+//            Log.d(tagOrientation, "Actualizando rotación a: $rotation con dimensiones $adjustedWidth x $adjustedHeight")
+
+            // ajustar la orientación de la vista previa según la rotación actual
+            preview?.targetRotation = rotation
+
+            // Desenlazar todo y volver a enlazar con la nueva configuración
+            provider.unbindAll()
+            camera = provider.bindToLifecycle(
+                activity as LifecycleOwner,
+                cameraSelector,
+                preview,
+                imageAnalysis
+            )
+
+            // Actualizar el tamaño de la textura
+            flutterTexture?.surfaceTexture()?.setDefaultBufferSize(adjustedWidth, adjustedHeight)
+
+            // Notificar a Flutter sobre el cambio de tamaño (si es necesario implementar)
+//            methodChannel.invokeMethod("onTextureResized", mapOf(
+//                "width" to adjustedWidth,
+//                "height" to adjustedHeight,
+//                "rotation" to rotation
+//            ))
+
+            // Restaurar configuraciones como flash y enfoque
+            camera?.cameraControl?.enableTorch(flashEnabled)
+            setupImprovedFocus()
+
+            Log.d(tagOrientation, "Rotación actualizada a: $rotation ($adjustedWidth x $adjustedHeight)")
+        } catch (e: Exception) {
+            Log.e(tagOrientation, "Error al actualizar rotación de cámara", e)
         }
     }
 
     private fun restartPreviewIfNeeded() {
         try {
-//            Log.d(TAG_ORIENTATION, "Entró aquí")
-//
-//
-//            //Log.d(TAG_ORIENTATION, "actualicé el texture")
-//
-//            camera?.cameraControl?.cancelFocusAndMetering()
-//
-//            // Unbind and rebind to update rotation
-//            cameraProvider?.let { provider ->
-//                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-//
-//                // Configurar el análisis de imágenes con la orientación actualizada
-//                // Actualizar rotación para el preview y el análisis de imágenes
-////                val rotation = when (lastKnownRotation) {
-////                    Surface.ROTATION_0 -> 0
-////                    Surface.ROTATION_90 -> 90
-////                    Surface.ROTATION_180 -> 180
-////                    Surface.ROTATION_270 -> 270
-////                    else -> 0
-////                }
-//
-//                // Recrear la configuración con la nueva resolución
-//                //val resolution = extractResolution(null) // O pasar las opciones guardadas
-//
-//                preview?.setSurfaceProvider { request ->
-//                    val texture = flutterTexture?.surfaceTexture()
-//                    texture?.setDefaultBufferSize(
-//                        request.resolution.width,
-//                        request.resolution.height
-//                    )
-//                    val surface = Surface(texture!!)
-//                    request.provideSurface(surface, cameraExecutor) {
-//                        surface.release()
-//                    }
-//                }
-//
-////                preview?.targetTotation = rotation
-////                imageAnalysis?.targetTotation = rotation
-//
-//                // Unbind all use cases
-//                provider.unbindAll()
-//
-//                // Rebind with current orientation
-//                camera = provider.bindToLifecycle(
-//                    activity as LifecycleOwner,
-//                    cameraSelector,
-//                    preview,
-//                    imageAnalysis
-//                )
-//
-//                // Reset flash and focus
-//                camera?.cameraControl?.enableTorch(flashEnabled)
-//                setupImprovedFocus()
-//                // Log para depuración
-//                Log.d(TAG_ORIENTATION, "Preview reiniciado")
-            // }
+            Log.d(tagOrientation, "Restarting camera preview for new orientation")
+
+            cameraProvider?.let { provider ->
+                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+
+
+                // Unbind all use cases
+                provider.unbindAll()
+
+                // Rebind with updated orientation
+                camera = provider.bindToLifecycle(
+                    activity as LifecycleOwner,
+                    cameraSelector,
+                    preview,
+                    imageAnalysis
+                )
+
+                // Reset flash and focus settings
+                camera?.cameraControl?.enableTorch(flashEnabled)
+                setupImprovedFocus()
+            }
         } catch (e: Exception) {
             Log.e(tagOrientation, "Error restarting preview", e)
         }
@@ -480,6 +527,7 @@ class CameraHandler(
                     // If the camera supports manual focus, set it to an optimal distance
                     // for barcodes (approximately 20-30cm)
                     val optimalFocusDistance = minFocusDistance * 0.7f // 70% of the range
+                    camera?.cameraControl?.setLinearZoom(optimalFocusDistance)
                 }
             }
         } catch (e: Exception) {
