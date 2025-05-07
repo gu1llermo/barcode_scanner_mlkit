@@ -61,6 +61,7 @@ class CameraHandler(
     private var textureWidth = 720
     private var textureHeight = 1280
     //private var screenSize = Size(textureWidth, textureHeight)
+    private var isFrontCamera = false // Por defecto, usamos la cámara trasera
 
     @SuppressLint("UnsafeOptInUsageError")
     fun initializeCamera(options: Map<String, Any>?, result: Result) {
@@ -77,40 +78,8 @@ class CameraHandler(
                     try {
                         cameraProvider = cameraProviderFuture.get()
 
-                        // Extraer resolución personalizada de las opciones
-                            val resolution = extractResolution(options)
-
-//                        val resolutionStrategy = ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY
-
-//                        val resolutionSelector = ResolutionSelector.Builder().setResolutionStrategy(resolutionStrategy).build()
-
-                        // CameraX ya maneja automáticamente las orientaciones
-//                            preview = Preview.Builder().setTargetResolution(resolution).build()
-//                        preview = Preview.Builder().setResolutionSelector(resolutionSelector).build()
-                        //val screenSize = Size(resolution.width, resolution.height)
-                        val resolutionStrategy = ResolutionStrategy(
-                            resolution,
-                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
-                        )
-                        val resolutionSelector = ResolutionSelector.Builder()
-                            .setResolutionStrategy(resolutionStrategy)
-                            .build()
-
-                        val rotation = Surface.ROTATION_270
-//                        Log.d(tagOrientation, "Rotation: $rotation")
-
                         preview = Preview.Builder()
-//                            .setResolutionSelector(resolutionSelector)
-//                            .setTargetRotation(rotation)
-
-
-
-//                            .setTargetRotation(Surface.ROTATION_270)
-
-
                             .build()
-
-
 
                         // Usar la superficie de Flutter
                         preview?.setSurfaceProvider { request ->
@@ -143,8 +112,11 @@ class CameraHandler(
                             }
                         }
 
-                        // Cámara trasera
-                        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                        val cameraSelector = if (isFrontCamera) {
+                            CameraSelector.DEFAULT_FRONT_CAMERA
+                        } else {
+                            CameraSelector.DEFAULT_BACK_CAMERA
+                        }
 
                         // Vincular los casos de uso
                         cameraProvider?.unbindAll()
@@ -161,7 +133,7 @@ class CameraHandler(
                         setupImprovedFocus()
 
                         result.success(mapOf("textureId" to textureId))
-                        //setupOrientationListener()
+
                     } catch (e: Exception) {
                         Log.e(tagCameraHandler, "Error al inicializar la cámara", e)
                         result.error(
@@ -177,6 +149,41 @@ class CameraHandler(
         } catch (e: Exception) {
             Log.e(tagCameraHandler, "Error general al inicializar la cámara", e)
             result.error("INIT_ERROR", "Error general al inicializar la cámara", e.message)
+        }
+    }
+
+    fun switchCamera(result: Result) {
+        try {
+            isFrontCamera = !isFrontCamera
+
+            // Seleccionar la cámara según la variable
+            val cameraSelector = if (isFrontCamera) {
+                CameraSelector.DEFAULT_FRONT_CAMERA
+            } else {
+                CameraSelector.DEFAULT_BACK_CAMERA
+            }
+
+            // Desvinculamos todas las funciones actuales
+            cameraProvider?.unbindAll()
+
+            // Volvemos a vincular con la nueva cámara
+            camera = cameraProvider?.bindToLifecycle(
+                activity as LifecycleOwner,
+                cameraSelector,
+                preview,
+                imageAnalysis
+            )
+
+            // Restaurar la configuración de flash
+            camera?.cameraControl?.enableTorch(flashEnabled)
+
+            // Aplicar el enfoque fijo para la nueva cámara
+            setCameraDistance()
+
+            result.success(mapOf("isFrontCamera" to isFrontCamera))
+        } catch (e: Exception) {
+            Log.e(tagCameraHandler, "Error al cambiar de cámara", e)
+            result.error("CAMERA_SWITCH_ERROR", "Error al cambiar de cámara", e.message)
         }
     }
 
@@ -222,8 +229,11 @@ class CameraHandler(
                 return
             }
 
-            // Obtener el selector de cámara actual
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+            val cameraSelector = if (isFrontCamera) {
+                CameraSelector.DEFAULT_FRONT_CAMERA
+            } else {
+                CameraSelector.DEFAULT_BACK_CAMERA
+            }
 
             // Ajustar ancho y alto según la rotación (intercambiar si es necesario)
             val adjustedWidth = if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) textureHeight else textureWidth
@@ -268,7 +278,11 @@ class CameraHandler(
             Log.d(tagOrientation, "Restarting camera preview for new orientation")
 
             cameraProvider?.let { provider ->
-                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                val cameraSelector = if (isFrontCamera) {
+                    CameraSelector.DEFAULT_FRONT_CAMERA
+                } else {
+                    CameraSelector.DEFAULT_BACK_CAMERA
+                }
 
 
 
@@ -493,47 +507,79 @@ class CameraHandler(
         focusHandler.postDelayed(periodicFocusRunnable!!, 2500)
     }
 
-    // Nuevo método: Configurar la distancia de enfoque óptima para códigos de barras
     private fun setCameraDistance() {
         try {
-            // Get the camera manager
-            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            // Desactivar el enfoque periódico
+            periodicFocusRunnable?.let { focusHandler.removeCallbacks(it) }
+            periodicFocusRunnable = null
 
-            // Determine which camera we're using (assuming back camera by default)
-            val cameraSelector = cameraProvider?.availableCameraInfos?.firstOrNull()?.cameraSelector
-            val isBackCamera = cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA
+            // Cancelar cualquier acción de enfoque existente
+            camera?.cameraControl?.cancelFocusAndMetering()
 
-            // Find the appropriate camera ID
-            var cameraId: String? = null
-            for (id in cameraManager.cameraIdList) {
-                val characteristics = cameraManager.getCameraCharacteristics(id)
-                val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+            // Obtener el punto central para el enfoque
+            val factory = SurfaceOrientedMeteringPointFactory(1.0f, 1.0f)
+            val centerPoint = factory.createPoint(0.5f, 0.5f)
 
-                if ((isBackCamera && facing == CameraCharacteristics.LENS_FACING_BACK) ||
-                    (!isBackCamera && facing == CameraCharacteristics.LENS_FACING_FRONT)) {
-                    cameraId = id
-                    break
-                }
-            }
+            // Crear una acción de enfoque manual que no se cancele automáticamente
+            val focusAction = FocusMeteringAction.Builder(centerPoint, FocusMeteringAction.FLAG_AF)
+                .disableAutoCancel() // Esto evita que el enfoque vuelva al modo automático
+                .build()
 
-            if (cameraId != null) {
-                // Configure minimum focus distance (macro mode)
-                camera?.cameraControl?.setLinearZoom(0.1f) // Minimum zoom for wide field of view
+            // Aplicar la acción de enfoque
+            camera?.cameraControl?.startFocusAndMetering(focusAction)
+                ?.addListener({
+                    // Después de establecer el enfoque, aplicar un zoom específico
+                    // para aproximar a una distancia de enfoque de unos 10cm
+                    // Un valor de zoom lineal alrededor de 0.2-0.3 suele ser bueno
+                    // para objetos cercanos como códigos de barras
+                    camera?.cameraControl?.setLinearZoom(0.25f)
+                }, ContextCompat.getMainExecutor(context))
 
-                // Try to set manual focus if available
-                val characteristics = cameraManager.getCameraCharacteristics(cameraId)
-                val minFocusDistance = characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)
-                if (minFocusDistance != null && minFocusDistance > 0) {
-                    // If the camera supports manual focus, set it to an optimal distance
-                    // for barcodes (approximately 20-30cm)
-                    val optimalFocusDistance = minFocusDistance * 0.7f // 70% of the range
-                    camera?.cameraControl?.setLinearZoom(optimalFocusDistance)
-                }
-            }
         } catch (e: Exception) {
-            Log.e(tagCameraHandler, "Error setting focus distance", e)
+            Log.e(tagCameraHandler, "Error al establecer la distancia de enfoque fija", e)
         }
     }
+    // Nuevo método: Configurar la distancia de enfoque óptima para códigos de barras
+//    private fun setCameraDistance() {
+//        try {
+//            // Get the camera manager
+//            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+//
+//            // Determine which camera we're using (assuming back camera by default)
+//            val cameraSelector = cameraProvider?.availableCameraInfos?.firstOrNull()?.cameraSelector
+//            val isBackCamera = cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA
+//
+//            // Find the appropriate camera ID
+//            var cameraId: String? = null
+//            for (id in cameraManager.cameraIdList) {
+//                val characteristics = cameraManager.getCameraCharacteristics(id)
+//                val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+//
+//                if ((isBackCamera && facing == CameraCharacteristics.LENS_FACING_BACK) ||
+//                    (!isBackCamera && facing == CameraCharacteristics.LENS_FACING_FRONT)) {
+//                    cameraId = id
+//                    break
+//                }
+//            }
+//
+//            if (cameraId != null) {
+//                // Configure minimum focus distance (macro mode)
+//                camera?.cameraControl?.setLinearZoom(0.1f) // Minimum zoom for wide field of view
+//
+//                // Try to set manual focus if available
+//                val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+//                val minFocusDistance = characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)
+//                if (minFocusDistance != null && minFocusDistance > 0) {
+//                    // If the camera supports manual focus, set it to an optimal distance
+//                    // for barcodes (approximately 20-30cm)
+//                    val optimalFocusDistance = minFocusDistance * 0.7f // 70% of the range
+//                    camera?.cameraControl?.setLinearZoom(optimalFocusDistance)
+//                }
+//            }
+//        } catch (e: Exception) {
+//            Log.e(tagCameraHandler, "Error setting focus distance", e)
+//        }
+//    }
 
     // Nuevo método: Implementar un método para permitir enfoque manual al tocar la pantalla
     fun onTouchToFocus(x: Float, y: Float) {
