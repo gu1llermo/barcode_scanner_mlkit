@@ -255,6 +255,9 @@ class BarcodeScannerMlkitPlugin: FlutterPlugin, MethodCallHandler, ActivityAware
             result.error("INVALID_ARGS", "Coordenadas x,y no proporcionadas o inválidas", null)
           }
         }
+        "switchCamera" -> {
+          cameraHandler?.switchCamera(result)
+        }
         else -> {
           result.notImplemented()
         }
