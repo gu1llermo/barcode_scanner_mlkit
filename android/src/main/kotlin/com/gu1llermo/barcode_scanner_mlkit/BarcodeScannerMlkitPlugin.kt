@@ -1,6 +1,7 @@
 package com.gu1llermo.barcode_scanner_mlkit
 
 import androidx.annotation.NonNull
+import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -208,6 +209,7 @@ class BarcodeScannerMlkitPlugin: FlutterPlugin, MethodCallHandler, ActivityAware
 
   inner class CameraMethodHandler : MethodCallHandler {
     override fun onMethodCall(call: MethodCall, result: Result) {
+      //Log.d("call.method", "Pasó aquí ${call.method}")
       when (call.method) {
         "initializeCamera" -> {
           val options = call.argument<Map<String, Any>>("options")

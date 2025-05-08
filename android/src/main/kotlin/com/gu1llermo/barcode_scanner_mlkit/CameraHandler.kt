@@ -60,6 +60,7 @@ class CameraHandler(
     // Variables para almacenar el tamaño de la textura
     private var textureWidth = 720
     private var textureHeight = 1280
+
     //private var screenSize = Size(textureWidth, textureHeight)
     private var isFrontCamera = false // Por defecto, usamos la cámara trasera
 
@@ -83,13 +84,17 @@ class CameraHandler(
 
                         // Usar la superficie de Flutter
                         preview?.setSurfaceProvider { request ->
-                            val texture = flutterTexture?.surfaceTexture() ?: return@setSurfaceProvider
+                            val texture =
+                                flutterTexture?.surfaceTexture() ?: return@setSurfaceProvider
 
                             // Guardar las dimensiones actuales
                             textureWidth = request.resolution.width
                             textureHeight = request.resolution.height
 
-                            texture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
+                            texture.setDefaultBufferSize(
+                                request.resolution.width,
+                                request.resolution.height
+                            )
                             val surface = Surface(texture)
                             request.provideSurface(surface, cameraExecutor) {
                                 surface.release()
@@ -156,17 +161,20 @@ class CameraHandler(
         try {
             isFrontCamera = !isFrontCamera
 
-            // Seleccionar la cámara según la variable
+            // Select appropriate camera
             val cameraSelector = if (isFrontCamera) {
                 CameraSelector.DEFAULT_FRONT_CAMERA
             } else {
                 CameraSelector.DEFAULT_BACK_CAMERA
             }
 
-            // Desvinculamos todas las funciones actuales
+            // Setup camera-specific analysis settings
+            setupImageAnalysisForCurrentCamera()
+
+            // Unbind current camera
             cameraProvider?.unbindAll()
 
-            // Volvemos a vincular con la nueva cámara
+            // Bind with new camera
             camera = cameraProvider?.bindToLifecycle(
                 activity as LifecycleOwner,
                 cameraSelector,
@@ -174,17 +182,55 @@ class CameraHandler(
                 imageAnalysis
             )
 
-            // Restaurar la configuración de flash
-            camera?.cameraControl?.enableTorch(flashEnabled)
+            // Apply camera-specific focus and flash settings
+            camera?.cameraControl?.enableTorch(flashEnabled && !isFrontCamera) // Disable flash for front camera
 
-            // Aplicar el enfoque fijo para la nueva cámara
+            // Apply appropriate focus settings for the selected camera
             setCameraDistance()
+
+            // For front camera specifically, trigger focus immediately and repeatedly
+            if (isFrontCamera) {
+                triggerFocusForFrontCamera()
+            }
 
             result.success(mapOf("isFrontCamera" to isFrontCamera))
         } catch (e: Exception) {
-            Log.e(tagCameraHandler, "Error al cambiar de cámara", e)
-            result.error("CAMERA_SWITCH_ERROR", "Error al cambiar de cámara", e.message)
+            Log.e(tagCameraHandler, "Error switching camera", e)
+            result.error("CAMERA_SWITCH_ERROR", "Error switching camera", e.message)
         }
+    }
+
+    private fun triggerFocusForFrontCamera() {
+        // Set up periodic focus for front camera
+        focusHandler.removeCallbacksAndMessages(null)
+
+        // Create a runnable for front camera focus
+        val frontCameraFocusRunnable = object : Runnable {
+            override fun run() {
+                if (isFrontCamera && camera != null && !isPaused) {
+                    val factory = SurfaceOrientedMeteringPointFactory(1.0f, 1.0f)
+                    // Create a focus action that covers multiple points
+                    val focusAction = FocusMeteringAction.Builder(
+                        factory.createPoint(0.5f, 0.5f),
+                        FocusMeteringAction.FLAG_AF
+                    )
+                        .addPoint(factory.createPoint(0.5f, 0.3f), FocusMeteringAction.FLAG_AF)
+                        .addPoint(factory.createPoint(0.5f, 0.7f), FocusMeteringAction.FLAG_AF)
+                        .addPoint(factory.createPoint(0.3f, 0.5f), FocusMeteringAction.FLAG_AF)
+                        .addPoint(factory.createPoint(0.7f, 0.5f), FocusMeteringAction.FLAG_AF)
+                        .setAutoCancelDuration(1, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+
+                    camera?.cameraControl?.startFocusAndMetering(focusAction)
+
+                    // Schedule next focus
+                    focusHandler.postDelayed(this, 1000) // More frequent focus for front camera
+                }
+            }
+        }
+
+        // Start immediate focus
+        frontCameraFocusRunnable.run()
     }
 
     private fun setupOrientationListener() {
@@ -203,9 +249,12 @@ class CameraHandler(
                 // Only update if rotation changed
                 if (currentRotation != lastKnownRotation) {
                     lastKnownRotation = currentRotation
-                    Log.d(tagOrientation, "Orientation changed to: $orientation, rotation: $currentRotation")
+                    Log.d(
+                        tagOrientation,
+                        "Orientation changed to: $orientation, rotation: $currentRotation"
+                    )
                     // Update camera
-                   // restartPreviewIfNeeded()
+                    // restartPreviewIfNeeded()
                     // Aquí está la clave: actualizar el viewport con la nueva rotación
                     activity.runOnUiThread {
                         updateCameraWithRotation(currentRotation)
@@ -236,8 +285,10 @@ class CameraHandler(
             }
 
             // Ajustar ancho y alto según la rotación (intercambiar si es necesario)
-            val adjustedWidth = if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) textureHeight else textureWidth
-            val adjustedHeight = if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) textureWidth else textureHeight
+            val adjustedWidth =
+                if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) textureHeight else textureWidth
+            val adjustedHeight =
+                if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) textureWidth else textureHeight
 
 //            Log.d(tagOrientation, "Actualizando rotación a: $rotation con dimensiones $adjustedWidth x $adjustedHeight")
 
@@ -267,7 +318,10 @@ class CameraHandler(
             camera?.cameraControl?.enableTorch(flashEnabled)
             setupImprovedFocus()
 
-            Log.d(tagOrientation, "Rotación actualizada a: $rotation ($adjustedWidth x $adjustedHeight)")
+            Log.d(
+                tagOrientation,
+                "Rotación actualizada a: $rotation ($adjustedWidth x $adjustedHeight)"
+            )
         } catch (e: Exception) {
             Log.e(tagOrientation, "Error al actualizar rotación de cámara", e)
         }
@@ -283,7 +337,6 @@ class CameraHandler(
                 } else {
                     CameraSelector.DEFAULT_BACK_CAMERA
                 }
-
 
 
                 // Unbind all use cases
@@ -507,38 +560,38 @@ class CameraHandler(
         focusHandler.postDelayed(periodicFocusRunnable!!, 2500)
     }
 
-    private fun setCameraDistance() {
-        try {
-            // Desactivar el enfoque periódico
-            periodicFocusRunnable?.let { focusHandler.removeCallbacks(it) }
-            periodicFocusRunnable = null
-
-            // Cancelar cualquier acción de enfoque existente
-            camera?.cameraControl?.cancelFocusAndMetering()
-
-            // Obtener el punto central para el enfoque
-            val factory = SurfaceOrientedMeteringPointFactory(1.0f, 1.0f)
-            val centerPoint = factory.createPoint(0.5f, 0.5f)
-
-            // Crear una acción de enfoque manual que no se cancele automáticamente
-            val focusAction = FocusMeteringAction.Builder(centerPoint, FocusMeteringAction.FLAG_AF)
-                .disableAutoCancel() // Esto evita que el enfoque vuelva al modo automático
-                .build()
-
-            // Aplicar la acción de enfoque
-            camera?.cameraControl?.startFocusAndMetering(focusAction)
-                ?.addListener({
-                    // Después de establecer el enfoque, aplicar un zoom específico
-                    // para aproximar a una distancia de enfoque de unos 10cm
-                    // Un valor de zoom lineal alrededor de 0.2-0.3 suele ser bueno
-                    // para objetos cercanos como códigos de barras
-                    camera?.cameraControl?.setLinearZoom(0.25f)
-                }, ContextCompat.getMainExecutor(context))
-
-        } catch (e: Exception) {
-            Log.e(tagCameraHandler, "Error al establecer la distancia de enfoque fija", e)
-        }
-    }
+//    private fun setCameraDistance() {
+//        try {
+//            // Desactivar el enfoque periódico
+//            periodicFocusRunnable?.let { focusHandler.removeCallbacks(it) }
+//            periodicFocusRunnable = null
+//
+//            // Cancelar cualquier acción de enfoque existente
+//            camera?.cameraControl?.cancelFocusAndMetering()
+//
+//            // Obtener el punto central para el enfoque
+//            val factory = SurfaceOrientedMeteringPointFactory(1.0f, 1.0f)
+//            val centerPoint = factory.createPoint(0.5f, 0.5f)
+//
+//            // Crear una acción de enfoque manual que no se cancele automáticamente
+//            val focusAction = FocusMeteringAction.Builder(centerPoint, FocusMeteringAction.FLAG_AF)
+//                .disableAutoCancel() // Esto evita que el enfoque vuelva al modo automático
+//                .build()
+//
+//            // Aplicar la acción de enfoque
+//            camera?.cameraControl?.startFocusAndMetering(focusAction)
+//                ?.addListener({
+//                    // Después de establecer el enfoque, aplicar un zoom específico
+//                    // para aproximar a una distancia de enfoque de unos 10cm
+//                    // Un valor de zoom lineal alrededor de 0.2-0.3 suele ser bueno
+//                    // para objetos cercanos como códigos de barras
+//                    camera?.cameraControl?.setLinearZoom(0.25f)
+//                }, ContextCompat.getMainExecutor(context))
+//
+//        } catch (e: Exception) {
+//            Log.e(tagCameraHandler, "Error al establecer la distancia de enfoque fija", e)
+//        }
+//    }
     // Nuevo método: Configurar la distancia de enfoque óptima para códigos de barras
 //    private fun setCameraDistance() {
 //        try {
@@ -581,6 +634,96 @@ class CameraHandler(
 //        }
 //    }
 
+    private fun setCameraDistance() {
+        try {
+            // Get current camera selection
+            val isUsingFrontCamera = isFrontCamera
+
+            // Different focus strategies for front vs back cameras
+            if (isUsingFrontCamera) {
+                // For front camera - fixed focus at optimal distance
+                camera?.cameraControl?.setLinearZoom(0.0f)  // No zoom for front camera
+
+                // Enable continuous auto-focus for front camera
+                val factory = SurfaceOrientedMeteringPointFactory(1.0f, 1.0f)
+                val centerPoint = factory.createPoint(0.5f, 0.5f)
+
+                // Create a multi-point focus action for front camera
+                val focusAction =
+                    FocusMeteringAction.Builder(centerPoint, FocusMeteringAction.FLAG_AF)
+                        .addPoint(factory.createPoint(0.5f, 0.3f), FocusMeteringAction.FLAG_AF)
+                        .addPoint(factory.createPoint(0.5f, 0.7f), FocusMeteringAction.FLAG_AF)
+                        .addPoint(factory.createPoint(0.3f, 0.5f), FocusMeteringAction.FLAG_AF)
+                        .addPoint(factory.createPoint(0.7f, 0.5f), FocusMeteringAction.FLAG_AF)
+                        .setAutoCancelDuration(2, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+
+                camera?.cameraControl?.startFocusAndMetering(focusAction)
+            } else {
+                // Keep existing back camera focus logic
+                camera?.cameraControl?.setLinearZoom(0.1f)
+
+                // Get camera manager
+                val cameraManager =
+                    context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+
+                // Find the appropriate camera ID
+                var cameraId: String? = null
+                for (id in cameraManager.cameraIdList) {
+                    val characteristics = cameraManager.getCameraCharacteristics(id)
+                    val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+
+                    if (facing == CameraCharacteristics.LENS_FACING_BACK) {
+                        cameraId = id
+                        break
+                    }
+                }
+
+                if (cameraId != null) {
+                    val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+                    val minFocusDistance =
+                        characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)
+                    if (minFocusDistance != null && minFocusDistance > 0) {
+                        val optimalFocusDistance = minFocusDistance * 0.7f
+                        camera?.cameraControl?.setLinearZoom(optimalFocusDistance)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(tagCameraHandler, "Error setting focus distance", e)
+        }
+    }
+
+    private fun setupImageAnalysisForCurrentCamera() {
+        try {
+            // Create a new image analysis instance with appropriate settings
+            imageAnalysis = ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .apply {
+                    if (isFrontCamera) {
+                        // For front camera - prioritize higher resolution
+                        setTargetResolution(Size(1280, 720))
+                        // Potentially lower FPS for better quality
+                        setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                    } else {
+                        // Back camera can handle default settings
+                    }
+                }
+                .build()
+
+            // Set analyzer with existing logic
+            imageAnalysis?.setAnalyzer(cameraExecutor) { imageProxy ->
+                if (!isPaused) {
+                    processImageProxy(imageProxy)
+                } else {
+                    imageProxy.close()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(tagCameraHandler, "Error setting up image analysis", e)
+        }
+    }
+
     // Nuevo método: Implementar un método para permitir enfoque manual al tocar la pantalla
     fun onTouchToFocus(x: Float, y: Float) {
         try {
@@ -621,34 +764,49 @@ class CameraHandler(
                 val originalRotation = imageProxy.imageInfo.rotationDegrees
                 // Get the corrected rotation based on device orientation
                 //val correctedRotation = getCorrectImageRotation(originalRotation)
+                // Different handling for front vs back camera
+                if (isFrontCamera) {
+                    // For front camera, we'll need more detailed corrections
+                    // Check if we need to mirror the image
+                    val isMirrored = true // Front cameras typically have mirrored output
 
-                // Use the corrected rotation for InputImage
-                val image = InputImage.fromMediaImage(mediaImage, originalRotation)
+                    // For front camera, create input image with special handling
+                    val image = InputImage.fromMediaImage(mediaImage, originalRotation)
 
-                val task =
-                    scanner?.process(image)
+                    // For front camera, potentially use different scanner options
+                    val frontCameraOptions = if (isFrontCamera) {
+                        BarcodeScannerOptions.Builder()
+                            .setBarcodeFormats(Barcode.FORMAT_ALL_FORMATS)
+                            // You might need to use different settings for front camera
+                            .build()
+                    } else {
+                        null // Use default scanner for back camera
+                    }
+
+                    // Use front camera specific scanner if available
+                    val scannerToUse = if (isFrontCamera && frontCameraOptions != null) {
+                        BarcodeScanning.getClient(frontCameraOptions)
+                    } else {
+                        scanner
+                    }
+
+                    // Process the barcode
+                    val task = scannerToUse?.process(image)
                         ?.addOnSuccessListener { barcodes ->
+                            // Continue with your existing barcode processing logic
                             if (barcodes.isNotEmpty()) {
-                                val results =
-                                    barcodes
-                                        // filtra los valores vacíos
-                                        .filter {
-                                            it.rawValue != null && it.rawValue != ""
-                                        }
-                                        .map { barcode ->
-                                            val value = barcode.rawValue ?: ""
-                                            val format =
-                                                getBarcodeFormatString(
-                                                    barcode.format
-                                                )
+                                val results = barcodes
+                                    .filter { it.rawValue != null && it.rawValue != "" }
+                                    .map { barcode ->
+                                        val value = barcode.rawValue ?: ""
+                                        val format = getBarcodeFormatString(barcode.format)
 
-                                            mapOf(
-                                                "value" to value,
-                                                "format" to format,
-                                                "cornerPoints" to
-                                                        getCornerPoints(barcode)
-                                            )
-                                        }
+                                        mapOf(
+                                            "value" to value,
+                                            "format" to format,
+                                            "cornerPoints" to getCornerPoints(barcode)
+                                        )
+                                    }
 
                                 if (results.isNotEmpty()) {
                                     activity.runOnUiThread {
@@ -657,8 +815,6 @@ class CameraHandler(
                                             mapOf("barcodes" to results)
                                         )
                                     }
-                                    // Hacer una pausa después de detectar un código para
-                                    // evitar lecturas múltiples
                                     pauseTemporarily()
                                 }
                             }
@@ -666,12 +822,69 @@ class CameraHandler(
                         ?.addOnFailureListener { exception ->
                             Log.e(tagCameraHandler, "Error scanning barcode", exception)
                         }
-                        ?.addOnCompleteListener { imageProxy.close() }
+                        ?.addOnCompleteListener {
+                            // If using a temporary scanner, close it
+                            if (isFrontCamera && frontCameraOptions != null) {
+                                scannerToUse.close()
+                            }
+                            imageProxy.close()
+                        }
 
-                // Si el task es null, necesitamos cerrar manualmente el imageProxy
-                if (task == null) {
-                    imageProxy.close()
+                    if (task == null) {
+                        imageProxy.close()
+                    }
+                } else {
+                    val image = InputImage.fromMediaImage(mediaImage, originalRotation)
+
+                    val task =
+                        scanner?.process(image)
+                            ?.addOnSuccessListener { barcodes ->
+                                if (barcodes.isNotEmpty()) {
+                                    val results =
+                                        barcodes
+                                            // filtra los valores vacíos
+                                            .filter {
+                                                it.rawValue != null && it.rawValue != ""
+                                            }
+                                            .map { barcode ->
+                                                val value = barcode.rawValue ?: ""
+                                                val format =
+                                                    getBarcodeFormatString(
+                                                        barcode.format
+                                                    )
+
+                                                mapOf(
+                                                    "value" to value,
+                                                    "format" to format,
+                                                    "cornerPoints" to
+                                                            getCornerPoints(barcode)
+                                                )
+                                            }
+
+                                    if (results.isNotEmpty()) {
+                                        activity.runOnUiThread {
+                                            methodChannel.invokeMethod(
+                                                "onBarcodeDetected",
+                                                mapOf("barcodes" to results)
+                                            )
+                                        }
+                                        // Hacer una pausa después de detectar un código para
+                                        // evitar lecturas múltiples
+                                        pauseTemporarily()
+                                    }
+                                }
+                            }
+                            ?.addOnFailureListener { exception ->
+                                Log.e(tagCameraHandler, "Error scanning barcode", exception)
+                            }
+                            ?.addOnCompleteListener { imageProxy.close() }
+
+                    // Si el task es null, necesitamos cerrar manualmente el imageProxy
+                    if (task == null) {
+                        imageProxy.close()
+                    }
                 }
+
             } else {
                 Log.w(tagCameraHandler, "La imagen es nula, cerrando imageProxy")
                 imageProxy.close()
