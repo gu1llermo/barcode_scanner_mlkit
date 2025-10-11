@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:barcode_scanner_mlkit/barcode_scanner_mlkit.dart';
 
 class CameraExamplePage extends StatefulWidget {
-  const CameraExamplePage({Key? key}) : super(key: key);
+  const CameraExamplePage({super.key});
 
   @override
   State<CameraExamplePage> createState() => _CameraExamplePageState();
@@ -18,7 +18,7 @@ class _CameraExamplePageState extends State<CameraExamplePage> {
   final List<BarcodeFormat> _selectedFormats = [
     BarcodeFormat.qrCode,
     BarcodeFormat.code128,
-    BarcodeFormat.ean13
+    BarcodeFormat.ean13,
   ];
 
   void _onBarcodeDetected(List<BarcodeValue> barcodes) {
@@ -38,9 +38,7 @@ class _CameraExamplePageState extends State<CameraExamplePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Live Scanning Example'),
-      ),
+      appBar: AppBar(title: const Text('Live Scanning Example')),
       body: Column(
         children: [
           // Camera view takes most of the screen
@@ -107,10 +105,22 @@ class _CameraExamplePageState extends State<CameraExamplePage> {
                           }
                         },
                         items: const [
-                          DropdownMenuItem(value: CameraQuality.low, child: Text('Low')),
-                          DropdownMenuItem(value: CameraQuality.medium, child: Text('Medium')),
-                          DropdownMenuItem(value: CameraQuality.high, child: Text('High')),
-                          DropdownMenuItem(value: CameraQuality.max, child: Text('Maximum')),
+                          DropdownMenuItem(
+                            value: CameraQuality.low,
+                            child: Text('Low'),
+                          ),
+                          DropdownMenuItem(
+                            value: CameraQuality.medium,
+                            child: Text('Medium'),
+                          ),
+                          DropdownMenuItem(
+                            value: CameraQuality.high,
+                            child: Text('High'),
+                          ),
+                          DropdownMenuItem(
+                            value: CameraQuality.max,
+                            child: Text('Maximum'),
+                          ),
                         ],
                       ),
                     ),
@@ -135,12 +145,13 @@ class _CameraExamplePageState extends State<CameraExamplePage> {
                         color: Colors.green[100],
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: _detectedBarcodes.map((barcode) {
-                            return Text(
-                              '${barcode.format.toString().split('.').last}: ${barcode.value}',
-                              style: const TextStyle(fontSize: 16),
-                            );
-                          }).toList(),
+                          children:
+                              _detectedBarcodes.map((barcode) {
+                                return Text(
+                                  '${barcode.format.toString().split('.').last}: ${barcode.value}',
+                                  style: const TextStyle(fontSize: 16),
+                                );
+                              }).toList(),
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -163,9 +174,7 @@ class _CameraExamplePageState extends State<CameraExamplePage> {
   Widget _buildOverlay() {
     if (!_isScanning) return Container();
 
-    return CustomPaint(
-      painter: ScannerOverlayPainter(),
-    );
+    return CustomPaint(painter: ScannerOverlayPainter());
   }
 
   void _showCustomResolutionDialog() {
@@ -184,46 +193,52 @@ class _CameraExamplePageState extends State<CameraExamplePage> {
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Custom Resolution'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: widthController,
-              decoration: const InputDecoration(labelText: 'Width (pixels)'),
-              keyboardType: TextInputType.number,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Custom Resolution'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: widthController,
+                  decoration: const InputDecoration(
+                    labelText: 'Width (pixels)',
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+                TextField(
+                  controller: heightController,
+                  decoration: const InputDecoration(
+                    labelText: 'Height (pixels)',
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+              ],
             ),
-            TextField(
-              controller: heightController,
-              decoration: const InputDecoration(labelText: 'Height (pixels)'),
-              keyboardType: TextInputType.number,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-            },
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              final int width = int.tryParse(widthController.text) ?? 1280;
-              final int height = int.tryParse(heightController.text) ?? 720;
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  final int width = int.tryParse(widthController.text) ?? 1280;
+                  final int height = int.tryParse(heightController.text) ?? 720;
 
-              setState(() {
-                _customResolution = CameraResolution(width, height);
-                _selectedQuality = null; // Set to null to indicate custom resolution
-              });
+                  setState(() {
+                    _customResolution = CameraResolution(width, height);
+                    _selectedQuality =
+                        null; // Set to null to indicate custom resolution
+                  });
 
-              Navigator.of(context).pop();
-            },
-            child: const Text('Apply'),
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Apply'),
+              ),
+            ],
           ),
-        ],
-      ),
     );
   }
 }
@@ -239,9 +254,10 @@ class ScannerOverlayPainter extends CustomPainter {
       height: size.width * 0.7,
     );
 
-    final Paint paint = Paint()
-      ..color = Colors.black.withOpacity(0.5)
-      ..style = PaintingStyle.fill;
+    final Paint paint =
+        Paint()
+          ..color = Colors.black.withOpacity(0.5)
+          ..style = PaintingStyle.fill;
 
     // Draw the semi-transparent overlay
     canvas.drawPath(
@@ -254,18 +270,20 @@ class ScannerOverlayPainter extends CustomPainter {
     );
 
     // Draw scan area border
-    final Paint borderPaint = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
+    final Paint borderPaint =
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0;
 
     canvas.drawRect(innerRect, borderPaint);
 
     // Draw corner markers
-    final Paint cornerPaint = Paint()
-      ..color = Colors.green
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4.0;
+    final Paint cornerPaint =
+        Paint()
+          ..color = Colors.green
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4.0;
 
     final double cornerSize = size.width * 0.05;
 

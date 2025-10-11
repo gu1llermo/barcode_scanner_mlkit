@@ -81,6 +81,17 @@ class CameraHandler(
 
                         preview = Preview.Builder()
                             .build()
+//                        Log.d(
+//                            "prueba_90",
+//                            "Version nueva"
+//                        )
+//
+//                        val tamanio = Size(480,640)
+//
+//                        preview = Preview.Builder()
+//                            .setTargetResolution(tamanio)
+//                            .setTargetRotation(Surface.ROTATION_90) // Agregar esta línea para rotar 90 grados
+//                            .build()
 
                         // Usar la superficie de Flutter
                         preview?.setSurfaceProvider { request ->
